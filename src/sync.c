@@ -1515,6 +1515,10 @@ void sync_iniciar(void) {
   // staging buffers. Restore them even while an old sync drains or backs off.
   addonsRestaurar();
   desc_sessao_preparada();
+  if (sessao_eh_convidado() || !nuvem_pronta()) {
+    estado = SYNC_PRONTO;
+    return;
+  }
   // PEDIDO COM O FIO VIVO NAO SE PERDE. Voltar calado deixava um buraco: o
   // fio que estava no ar pode ser justamente o interrompido pela pergunta de
   // perfil, e ai o ciclo completo do perfil escolhido so partia com
@@ -1551,6 +1555,7 @@ void sync_iniciar(void) {
 // com o decodificador, e um engasgo de imagem custa mais que 5 minutos de
 // atraso no progresso.
 int sync_periodico(unsigned agoraMs) {
+  if (sessao_eh_convidado() || !nuvem_pronta()) return 0;
   if (!sessao_logada() || fioVivo) return 0;
   if (nuvem_freio_ativo()) return 0;
   // Sem nenhum ciclo bem-sucedido ainda, quem manda e quem chamou sync_iniciar

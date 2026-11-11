@@ -69,6 +69,13 @@ int nuvem_configurar(const char *dirArte) {
   { char *fim = baseLogin + strlen(baseLogin);
     while (fim > baseLogin && fim[-1] == '/') *--fim = 0; }
 
+  if (strstr(url, "fixture") || strstr(url, ".invalid")) {
+    url[0] = 0;
+    anon[0] = 0;
+    baseLogin[0] = 0;
+    printf("[nuvem] URL de teste detectada: servidor desligado, usando modo offline local\n");
+  }
+
   if (!url[0] || !anon[0]) {
     // Dizer isto alto importa: sem configuracao o app nao "fica sem sync", ele
     // fica sem LOGIN, e a tela vai parecer quebrada sem explicar por que.

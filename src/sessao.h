@@ -70,6 +70,11 @@ int sessao_identidade_local_copiar(char *usuario, size_t nUsuario, char *jwt, si
 // for o token da sessao. Quem ja trocou o token nao renova de novo.
 void sessao_token_recusado(const char *tok);
 
+// Ativa uma sessao local sem conta (modo convidado/offline), permitindo usar
+// o app com addons e Live TV locais sem conexao a um servidor Supabase.
+void sessao_entrar_convidado(void);
+int  sessao_eh_convidado(void);
+
 // Comeca o fluxo de login num fio proprio (as chamadas bloqueiam). Idempotente
 // enquanto um fluxo estiver em andamento.
 void sessao_login_comecar(void);

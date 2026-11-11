@@ -50,7 +50,7 @@ static int modo, foco, focoQr;
 static int campoAberto = -1;
 static char email[TECLADO_LONGO + 1], senha[TECLADO_LONGO + 1];
 static char aviso[160];          // erro local ("preencha..."), traduzido no desenho
-static float animFoco[LE_N], animFocoQr[2];
+static float animFoco[LE_N], animFocoQr[3];
 static int esperando;            // pedido de e-mail saiu, resposta ainda nao veio
 static int senhaVisivel;         // "Mostrar" na senha (campo e modal)
 
@@ -64,14 +64,24 @@ static const char *ALFA_SENHA =
 
 static void apagarTexto(char *p, size_t n) { volatile char *v = p; while (n--) *v++ = 0; }
 
-// Quantos botoes a tela do QR tem agora: "Tentar de novo" so existe no erro.
+// Quantos botoes a tela do QR tem agora.
 static int qrTemRetry(void) {
   SesEstado st = sessao_estado();
   return st == SES_ERRO || st == SES_DESLOGADO;
 }
-static int qrN(void) { return nuvem_pronta() ? (qrTemRetry() ? 2 : 1) : 0; }
+static int qrN(void) {
+  if (!nuvem_pronta()) return 1;
+  return qrTemRetry() ? 3 : 2;
+}
 // Indice do botao "e-mail" na tela do QR.
-static int qrEmail(void) { return qrTemRetry() ? 1 : 0; }
+static int qrEmail(void) {
+  if (!nuvem_pronta()) return -1;
+  return qrTemRetry() ? 1 : 0;
+}
+static int qrConvidado(void) {
+  if (!nuvem_pronta()) return 0;
+  return qrTemRetry() ? 2 : 1;
+}
 
 static void abrirEmail(void) {
   modo = LG_EMAIL; foco = email[0] ? LE_SENHA : LE_EMAIL; aviso[0] = 0;
@@ -219,6 +229,7 @@ void login_evento(const SDL_Event *e) {
   else if (k == SDLK_DOWN && focoQr + 1 < qrN()) focoQr++;
   else if (ok && qrN()) {
     if (focoQr >= qrN()) focoQr = qrN() - 1;
+    if (focoQr == qrConvidado()) { sessao_entrar_convidado(); return; }
     if (focoQr == qrEmail()) { abrirEmail(); return; }
     // "Tentar de novo". OK so faz sentido quando ha o que refazer. Com o
     // codigo na tela o unico botao e o do e-mail: reiniciar o fluxo trocaria o
@@ -265,7 +276,7 @@ void login_atualizar(float dt, Uint32 agora) {
   for (i = 0; i < LE_N; i++)
     animFoco[i] = anim_mola(animFoco[i], modo == LG_EMAIL && foco == i && !teclado_aberto() ? 1.0f : 0.0f,
                             dt, NV_MOLA_FOCO);
-  for (i = 0; i < 2; i++)
+  for (i = 0; i < 3; i++)
     animFocoQr[i] = anim_mola(animFocoQr[i], modo == LG_QR && focoQr == i ? 1.0f : 0.0f, dt, NV_MOLA_FOCO);
 }
 
@@ -386,22 +397,24 @@ void login_desenhar(Uint32 agora) {
   }
 
   if (!nuvem_pronta()) {
-    // Este caso e de COMPILACAO, nao do usuario: o pacote saiu sem a
-    // configuracao do servidor. Dizer "erro ao entrar" mandaria a pessoa tentar
-    // de novo para sempre contra algo que nunca vai funcionar.
-    linhaCentrada(TXT_HEADLINE, "Este pacote foi montado sem servidor.",
-                  236, 108, 108, y, 1.0f);
+    linhaCentrada(TXT_HEADLINE, i18n("Modo Offline (sem servidor de conta)"),
+                  210, 212, 220, y, 1.0f);
     linhaCentrada(TXT_BODY,
-                  "Quem gerou o .ipk precisa informar a URL e a chave do projeto.",
+                  i18n("Você pode usar o aplicativo localmente com seus addons e TV ao vivo."),
                   176, 178, 186, y + 62.0f, 1.0f);
+    y += 150.0f;
+    pilula(NV_TELA_W * 0.5f, y, LG_EMAIL_PILL_W, i18n("Continuar sem conta"),
+           animFocoQr[0], 1.0f, ptFocoQr, 0);
     return;
   }
 
   switch (st) {
     case SES_PEDINDO:
       linhaCentrada(TXT_HEADLINE, "Preparando o código…", 210, 212, 220, y, 1.0f);
-      pilula(NV_TELA_W * 0.5f, y + 110.0f, LG_EMAIL_PILL_W, "Entrar com e-mail e senha",
+      pilula(NV_TELA_W * 0.5f, y + 100.0f, LG_EMAIL_PILL_W, "Entrar com e-mail e senha",
              animFocoQr[0], 1.0f, ptFocoQr, 0);
+      pilula(NV_TELA_W * 0.5f, y + 100.0f + LG_PILL_H + 20.0f, LG_EMAIL_PILL_W, i18n("Continuar sem conta"),
+             animFocoQr[1], 1.0f, ptFocoQr, 1);
       break;
 
     case SES_AGUARDANDO: {
@@ -426,12 +439,12 @@ void login_desenhar(Uint32 agora) {
         linhaCentrada(TXT_HEADLINE, "não consegui desenhar o código",
                       236, 108, 108, y + 100.0f, 1.0f);
       }
-      y += LG_QR_LADO + 42.0f;
+      y += LG_QR_LADO + 36.0f;
 
       // O endereco em texto e a saida de emergencia de quem nao tem camera —
       // nao e o caminho principal, e por isso vem em corpo pequeno.
       if (url[0]) linhaCentrada(TXT_CAPTION, url, 150, 152, 160, y, 1.0f);
-      y += 46.0f;
+      y += 40.0f;
 
       // Sinal de vida. Sem ele a tela fica parada por minutos e parece travada
       // — e a pessoa reinicia o app no meio do login. Respiracao lenta (ciclo
@@ -439,9 +452,11 @@ void login_desenhar(Uint32 agora) {
       { float a = 0.5f + 0.5f * sinf(pulso * 3.14159f);
         linhaCentrada(TXT_CAPTION, "Aguardando a autorização…",
                       150, 152, 160, y, 0.45f + 0.40f * a); }
-      y += 64.0f;
+      y += 56.0f;
       pilula(NV_TELA_W * 0.5f, y, LG_EMAIL_PILL_W, "Entrar com e-mail e senha",
              animFocoQr[0], 1.0f, ptFocoQr, 0);
+      pilula(NV_TELA_W * 0.5f, y + LG_PILL_H + 20.0f, LG_EMAIL_PILL_W, i18n("Continuar sem conta"),
+             animFocoQr[1], 1.0f, ptFocoQr, 1);
       break;
     }
 
@@ -459,11 +474,13 @@ void login_desenhar(Uint32 agora) {
       const char *msg = sessao_erro();
       linhaCentrada(TXT_HEADLINE, msg[0] ? msg : "Não consegui falar com o servidor.",
                     236, 108, 108, y, 1.0f);
-      y += 96.0f;
+      y += 80.0f;
       pilula(NV_TELA_W * 0.5f, y, LG_EMAIL_PILL_W, "Tentar de novo",
              animFocoQr[0], animBotao, ptFocoQr, 0);
-      pilula(NV_TELA_W * 0.5f, y + LG_PILL_H + 24.0f, LG_EMAIL_PILL_W, "Entrar com e-mail e senha",
+      pilula(NV_TELA_W * 0.5f, y + LG_PILL_H + 20.0f, LG_EMAIL_PILL_W, "Entrar com e-mail e senha",
              animFocoQr[1], animBotao, ptFocoQr, 1);
+      pilula(NV_TELA_W * 0.5f, y + (LG_PILL_H + 20.0f) * 2.0f, LG_EMAIL_PILL_W, i18n("Continuar sem conta"),
+             animFocoQr[2], animBotao, ptFocoQr, 2);
       break;
     }
   }

@@ -4949,9 +4949,14 @@ void app_atualizar(float dt, Uint32 agora) {
       perfilAbrirSessao(perfilAntes);
       sync_reaplicar_ajustes();
       sync_iniciar();
-      tela = TELA_ESCOLHA_PERFIL;
-      perfilAntes = perfis_ativo();
-      perfilsel_iniciar();
+      if (perfis_precisa_escolher()) {
+        tela = TELA_ESCOLHA_PERFIL;
+        perfilAntes = perfis_ativo();
+        perfilsel_iniciar();
+      } else {
+        tela = TELA_HOME;
+        perfilsel_continuar_ativo();
+      }
       menu_definir_destino(MENU_INICIO);
     }
     return;

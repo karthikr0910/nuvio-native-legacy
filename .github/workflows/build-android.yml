@@ -75,9 +75,9 @@ jobs:
       - name: Prepare environment configuration
         run: |
           cat << 'EOF' > local.properties
-          NUVIO_SUPABASE_URL=https://fixture.invalid
-          NUVIO_SUPABASE_ANON_KEY=fixture-public
-          TV_LOGIN_WEB_BASE_URL=https://fixture.invalid/login
+          NUVIO_SUPABASE_URL=
+          NUVIO_SUPABASE_ANON_KEY=
+          TV_LOGIN_WEB_BASE_URL=
           EOF
 
       - name: Build Native Dependencies (curl, mbedtls, libjpeg, libwebp)

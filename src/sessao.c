@@ -784,7 +784,13 @@ static void soltar(void *(*rotina)(void *)) {
 void sessao_iniciar(void) {
   char *buf = dados_ler(ARQ_SESSAO);
   char *l1, *l2, *l3;
-  if (!buf) return;
+  if (!buf) {
+    if (!nuvem_pronta()) {
+      printf("[sessao] sem servidor de conta configurado: iniciando sessao local como convidado\n");
+      sessao_entrar_convidado();
+    }
+    return;
+  }
   l1 = buf;
   l2 = strchr(l1, '\n');
   if (l2) { *l2++ = 0; l3 = strchr(l2, '\n'); if (l3) *l3++ = 0; } else l3 = NULL;
@@ -801,6 +807,7 @@ void sessao_iniciar(void) {
     printf("[sessao] sessao gravada invalida: descartada, indo para o login\n");
     limpar();
     dados_apagar(ARQ_SESSAO);
+    if (!nuvem_pronta()) sessao_entrar_convidado();
     return;
   }
   // Sessao anonima gravada NAO conta como conta: ela existe so como degrau para
@@ -809,6 +816,8 @@ void sessao_iniciar(void) {
   if (acesso[0] && !anonima) {
     estado = SES_LOGADO;
     printf("[sessao] sessao restaurada (%s)\n", sub[0] ? sub : "sem sub");
+  } else if (!nuvem_pronta()) {
+    sessao_entrar_convidado();
   }
 }
 
@@ -823,6 +832,28 @@ int sessao_logada(void) {
   r = acesso[0] != 0 && !anonima;
   pthread_mutex_unlock(&tokTrava);
   return r;
+}
+
+int sessao_eh_convidado(void) {
+  int r;
+  pthread_mutex_lock(&tokTrava);
+  r = (acesso[0] != 0 && !anonima && strcmp(sub, "guest") == 0);
+  pthread_mutex_unlock(&tokTrava);
+  return r;
+}
+
+void sessao_entrar_convidado(void) {
+  pthread_mutex_lock(&tokTrava);
+  snprintf(acesso, sizeof acesso, "%s", "eyJhbGciOiAibm9uZSJ9.eyJzdWIiOiJndWVzdCIsImV4cCI6MjA0NDY0MTk0OH0.guest");
+  snprintf(renovar, sizeof renovar, "%s", "guest-refresh");
+  anonima = 0;
+  lerJwt(acesso);
+  gravarSessao();
+  estado = SES_LOGADO;
+  codigo[0] = 0;
+  erro[0] = 0;
+  pthread_mutex_unlock(&tokTrava);
+  printf("[sessao] modo convidado ativado (sessao local)\n");
 }
 const char *sessao_codigo(void)   { return codigo; }
 const char *sessao_url_login(void){ return urlLogin; }
