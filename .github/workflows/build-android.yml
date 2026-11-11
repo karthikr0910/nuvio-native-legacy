@@ -44,13 +44,25 @@ jobs:
           distribution: "temurin"
           java-version: "17"
 
-      - name: Install Android NDK & Build Tools
+      - name: Install Android NDK, CMake 3.22.1 & Build Tools
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y ninja-build
+          sudo chown -R runner:docker "$ANDROID_HOME"
           SDK_MGR="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
           echo "y" | "$SDK_MGR" --licenses || true
-          "$SDK_MGR" --install "ndk;27.2.12479018" "cmake;3.22.1" "platforms;android-35" "build-tools;35.0.0"
+          "$SDK_MGR" --install "cmake;3.22.1" "ndk;27.2.12479018" "platforms;android-35" "build-tools;35.0.0"
+          if [ ! -d "$ANDROID_HOME/cmake/3.22.1" ]; then
+            mkdir -p "$ANDROID_HOME/cmake/3.22.1/bin"
+            ln -sf /usr/bin/cmake "$ANDROID_HOME/cmake/3.22.1/bin/cmake"
+            ln -sf /usr/bin/ninja "$ANDROID_HOME/cmake/3.22.1/bin/ninja"
+          else
+            [ -f "$ANDROID_HOME/cmake/3.22.1/bin/ninja" ] || ln -sf /usr/bin/ninja "$ANDROID_HOME/cmake/3.22.1/bin/ninja"
+          fi
+          echo "Verifying SDK directories:"
+          for d in ndk/27.2.12479018 platforms/android-35 build-tools/35.0.0 cmake/3.22.1; do
+            echo "  $ANDROID_HOME/$d: $([ -d "$ANDROID_HOME/$d" ] && echo OK || echo MISSING)"
+          done
 
       - name: Cache Android build dependencies
         uses: actions/cache@v4
@@ -74,7 +86,7 @@ jobs:
 
       - name: Build Android Lite APKs (arm64 and armv7)
         run: |
-          bash tools/android.sh --debug-only
+          bash -x tools/android.sh --debug-only
 
       - name: List generated APKs
         run: |
