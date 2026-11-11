@@ -41,7 +41,11 @@ import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRendererCapabilitiesList
 import androidx.media3.exoplayer.ExoPlaybackException
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.hls.DefaultHlsExtractorFactory
 import androidx.media3.exoplayer.hls.HlsManifest
+import androidx.media3.exoplayer.hls.HlsMediaSource
+import androidx.media3.extractor.DefaultExtractorsFactory
+import androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory
 import androidx.media3.exoplayer.LoadControl
 import androidx.media3.exoplayer.Renderer
 import androidx.media3.exoplayer.RendererCapabilities
@@ -135,6 +139,7 @@ object NvPlayer {
     private var cabAtual = ""
     private var abriuEm = 0L
     private var retentou = false
+    private var retentouHlsFallback = false
     private var recuperacaoLive: LiveWindowRecovery? = null
     private var pronto = false
     private var duracaoEnviada = -1
@@ -630,6 +635,7 @@ object NvPlayer {
         lateinit var rede: (Long) -> DataSource.Factory
         lateinit var renderizadores: androidx.media3.exoplayer.DefaultRenderersFactory
         lateinit var fabricaMidia: DefaultMediaSourceFactory
+        var hlsFactory: HlsMediaSource.Factory? = null
         var fontePrecarregada: PreloadMediaSource? = null
         var fioPreparo: HandlerThread? = null
         var seletorPreparo: DefaultTrackSelector? = null
@@ -801,7 +807,7 @@ object NvPlayer {
             }
             s.ouvinte = ouv; s.analitico = ana
             p.addListener(ouv); p.addAnalyticsListener(ana)
-            val item = itemMidia(s.url)
+            val item = itemMidia(s.url, s.cab)
             if (s.inicioMs > 0) { p.setMediaItem(item, s.inicioMs.toLong()); s.inicioAceito = true }
             else p.setMediaItem(item)
             p.prepare()
@@ -850,7 +856,7 @@ object NvPlayer {
         val lista = DefaultRendererCapabilitiesList.Factory(descritores).createRendererCapabilitiesList()
         r.capacidadesPreparo = lista
         val capacidades: Array<RendererCapabilities> = lista.rendererCapabilities
-        val fonte = FonteComDuracao(r.fabricaMidia.createMediaSource(itemMidia(s.url))) { timeline ->
+        val fonte = FonteComDuracao(r.fabricaMidia.createMediaSource(itemMidia(s.url, s.cab))) { timeline ->
             if (!timeline.isEmpty) {
                 val w = timeline.getWindow(0, Timeline.Window())
                 s.duracaoFonteMs = w.durationMs
@@ -1220,11 +1226,63 @@ object NvPlayer {
 
     // --- abrir / liberar ------------------------------------------------------
 
-    private fun itemMidia(url: String): MediaItem {
+    internal fun extrairUrlECabecalhos(urlOriginal: String, cabecalhosOriginais: String): Pair<String, String> {
+        val idx = urlOriginal.indexOf('|')
+        if (idx < 0) return urlOriginal to cabecalhosOriginais
+        val limpa = urlOriginal.substring(0, idx).trim()
+        val params = urlOriginal.substring(idx + 1).trim()
+        val sb = StringBuilder(cabecalhosOriginais)
+        if (sb.isNotEmpty() && !sb.endsWith("\n")) sb.append("\n")
+        for (param in params.split('&')) {
+            val eq = param.indexOf('=')
+            if (eq > 0) {
+                val k = param.substring(0, eq).trim()
+                val v = Uri.decode(param.substring(eq + 1).trim())
+                sb.append(k).append(": ").append(v).append("\n")
+            }
+        }
+        return limpa to sb.toString()
+    }
+
+    internal fun ehHlsUrl(url: String, cabecalhos: String = ""): Boolean {
         val baixa = url.lowercase()
+        val uri = try { Uri.parse(url) } catch (_: Exception) { null }
+        val path = (uri?.path ?: "").lowercase()
+        val query = (uri?.query ?: "").lowercase()
+
+        // 1. Explicit m3u8 or m3u in path or query
+        if (path.endsWith(".m3u8") || path.endsWith(".m3u") || path.contains(".m3u8") || path.contains(".m3u")) return true
+        if (query.contains("m3u8") || query.contains(".m3u") || query.contains("format=m3u") ||
+            query.contains("output=m3u") || query.contains("type=m3u") || query.contains("output=hls")) return true
+        if (baixa.contains("m3u8") || baixa.contains(".m3u8")) return true
+
+        // 2. HLS path / query keywords
+        if (path.contains("/hls/") || path.endsWith("/hls") || query.contains("hls")) return true
+
+        // 3. Headers declaring HLS content type
+        if (cabecalhos.isNotEmpty()) {
+            val c = cabecalhos.lowercase()
+            if (c.contains("application/vnd.apple.mpegurl") ||
+                c.contains("application/x-mpegurl") ||
+                c.contains("audio/mpegurl") ||
+                c.contains("audio/x-mpegurl")) return true
+        }
+
+        return false
+    }
+
+    internal fun ehDashUrl(url: String): Boolean {
+        val baixa = url.lowercase()
+        val uri = try { Uri.parse(url) } catch (_: Exception) { null }
+        val path = (uri?.path ?: "").lowercase()
+        val query = (uri?.query ?: "").lowercase()
+        return path.endsWith(".mpd") || query.contains("mpd") || baixa.contains(".mpd") || path.contains("/dash/")
+    }
+
+    private fun itemMidia(url: String, cabecalhos: String = ""): MediaItem {
         val item = MediaItem.Builder().setUri(url)
-        if (baixa.contains(".m3u8") || baixa.contains("m3u8?")) item.setMimeType(MimeTypes.APPLICATION_M3U8)
-        else if (baixa.contains(".mpd")) item.setMimeType(MimeTypes.APPLICATION_MPD)
+        if (ehHlsUrl(url, cabecalhos)) item.setMimeType(MimeTypes.APPLICATION_M3U8)
+        else if (ehDashUrl(url)) item.setMimeType(MimeTypes.APPLICATION_MPD)
         return item.build()
     }
 
@@ -1239,6 +1297,7 @@ object NvPlayer {
     private fun criarPlayer(act: Activity, url: String, cabecalhos: String, preset: Int,
                             pedidoCache: Int, preparando: Boolean, geracao: Int, construir: Boolean = true,
                             idiomaAudio: String = "", titulo: String = "", kbps: Int = kbpsDeclarado): RecursosPlayer {
+        val (cleanUrl, cleanCab) = extrairUrlECabecalhos(url, cabecalhos)
         // Em aparelho de pouca RAM (ActivityManager: isLowRamDevice,
         // memoryClass <= 128 MB ou totalMem <= 3 GiB; a TCL de 2,4 GB tem
         // memoryClass 192 e so cai pelo totalMem)
@@ -1268,7 +1327,7 @@ object NvPlayer {
                 .setConnectTimeoutMs(15000).setReadTimeoutMs(20000)
             val props = HashMap<String, String>()
             var ua: String? = null
-            for (linha in cabecalhos.split('\n')) {
+            for (linha in cleanCab.split('\n')) {
                 val i = linha.indexOf(':')
                 if (i <= 0) continue
                 val nome = linha.substring(0, i).trim()
@@ -1277,6 +1336,11 @@ object NvPlayer {
                 if (nome.equals("User-Agent", ignoreCase = true)) { http.setUserAgent(valor); ua = valor }
                 else props[nome] = valor
             }
+            if (ua == null) {
+                val fallbackUa = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36"
+                http.setUserAgent(fallbackUa)
+                ua = fallbackUa
+            }
             http.setDefaultRequestProperties(props)
             val limited = !preparando && limitedNext
             // Check only once per player. HLS segments share the same connection gate.
@@ -1284,11 +1348,10 @@ object NvPlayer {
             val serialHttp: DataSource.Factory = if (limited) LimitedDataSource.Factory(http, { r.carga.cancelada }) {
                 if (checked.compareAndSet(false, true)) nativeLimitedStatus() else 0
             } else http
-            val baixa = url.lowercase()
-            val adaptativo = baixa.contains(".m3u8") || baixa.contains("m3u8?") || baixa.contains(".mpd")
+            val adaptativo = ehHlsUrl(cleanUrl, cleanCab) || ehDashUrl(cleanUrl) || LivePlaylistDataSource.isLiveTs(Uri.parse(cleanUrl))
             // Cache off or not applicable for a VOD: whatever was kept is stale.
             if (pedidoCache <= 0 || limited) { r.cacheEstado = CacheSessao.DESLIGADO; if (titulo.isNotEmpty()) CacheMidia.descartar("setting off") }
-            else if (adaptativo || !ParaleloDataSource.serve(Uri.parse(url))) {
+            else if (adaptativo || !ParaleloDataSource.serve(Uri.parse(cleanUrl))) {
                 r.cacheEstado = CacheSessao.NAO_SE_APLICA
                 if (titulo.isNotEmpty()) CacheMidia.descartar("not progressive")
             } else {
@@ -1303,7 +1366,7 @@ object NvPlayer {
                     }
                 }
                 // WARM RESUME: the same title and source reuse the downloaded part.
-                val guardado = if (titulo.isNotEmpty()) CacheMidia.pegar(titulo, url.substringBefore('#'), pedidoCache, aoFalhar) else null
+                val guardado = if (titulo.isNotEmpty()) CacheMidia.pegar(titulo, cleanUrl.substringBefore('#'), pedidoCache, aoFalhar) else null
                 val (c, estado) = if (guardado != null) guardado to CacheSessao.ATIVO
                                   else CacheMidia.criar(act.cacheDir, pedidoCache, aoFalhar)
                 r.cache = c; r.cacheEstado = estado
@@ -1327,21 +1390,36 @@ object NvPlayer {
                         .setAudioProcessors(arrayOf(r.proc)).build(), r.tap, { r.velocidadePcm })
             }.setExtensionRendererMode(androidx.media3.exoplayer.DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
                 .setEnableDecoderFallback(true)
-            r.fabricaMidia = DefaultMediaSourceFactory(act)
+            val extratores = DefaultExtractorsFactory()
+                .setTsExtractorFlags(
+                    DefaultTsPayloadReaderFactory.FLAG_ALLOW_NON_IDR_KEYFRAMES or
+                    DefaultTsPayloadReaderFactory.FLAG_DETECT_ACCESS_UNITS
+                )
+            val fonteDados = if (limited) DefaultDataSource.Factory(act, r.origem) else LivePlaylistDataSource.Factory(
+                DefaultDataSource.Factory(act, r.origem),
+                DefaultHttpDataSource.Factory().setAllowCrossProtocolRedirects(true)
+                    .setConnectTimeoutMs(4000).setReadTimeoutMs(4000)
+                    .setUserAgent(ua).setDefaultRequestProperties(props.filterKeys {
+                        !it.equals("If-None-Match", true) && !it.equals("If-Modified-Since", true)
+                    }),
+                report = { Log.i(TAG, it) },
+                liveTsUri = Uri.parse(cleanUrl).takeIf { LivePlaylistDataSource.isLiveTs(it) },
+            )
+            r.fabricaMidia = DefaultMediaSourceFactory(act, extratores)
                 // ParaleloDataSource faz as tres tentativas de transporte;
                 // nao empilhar outra rodada invisivel do Loader antes da
                 // maquina de reconexao 3/10/25 s do nucleo.
                 .setLoadErrorHandlingPolicy(PoliticaErroParalelo())
-                .setDataSourceFactory(if (limited) DefaultDataSource.Factory(act, r.origem) else LivePlaylistDataSource.Factory(
-                    DefaultDataSource.Factory(act, r.origem),
-                    DefaultHttpDataSource.Factory().setAllowCrossProtocolRedirects(true)
-                        .setConnectTimeoutMs(2000).setReadTimeoutMs(2000)
-                        .setUserAgent(ua).setDefaultRequestProperties(props.filterKeys {
-                            !it.equals("If-None-Match", true) && !it.equals("If-Modified-Since", true)
-                        }),
-                    report = { Log.i(TAG, it) },
-                    liveTsUri = Uri.parse(url).takeIf { LivePlaylistDataSource.isLiveTs(it) },
-                ))
+                .setDataSourceFactory(fonteDados)
+            val hlsExtratores = DefaultHlsExtractorFactory(
+                DefaultTsPayloadReaderFactory.FLAG_ALLOW_NON_IDR_KEYFRAMES or
+                DefaultTsPayloadReaderFactory.FLAG_DETECT_ACCESS_UNITS,
+                true
+            )
+            r.hlsFactory = HlsMediaSource.Factory(fonteDados)
+                .setExtractorFactory(hlsExtratores)
+                .setAllowChunklessPreparation(false)
+                .setLoadErrorHandlingPolicy(PoliticaErroParalelo())
             if (construir) construirPlayer(act, r)
             Log.i(TAG, "[player] buffer preset=$preset min=${minMs / 1000}s max=${maxMs / 1000}s teto=${bytes shr 20}MB preparo=$preparando")
             return r
@@ -1416,20 +1494,21 @@ object NvPlayer {
         principal.removeCallbacks(recriar)
         principal.removeCallbacks(estavelRun)
         val minha = sessao
-        urlAtual = url
-        cabAtual = cabecalhos
+        val (urlLimpa, cabLimpos) = extrairUrlECabecalhos(url, cabecalhos)
+        urlAtual = urlLimpa
+        cabAtual = cabLimpos
         inicioAtualMs = inicioMs
         geracaoNative = geracao
         fracaoAtual = if (inicioMs > 0) 0 else fracao
         fracaoPendente = 0
         abriuEm = SystemClock.elapsedRealtime()
-        if (!reabrindo) retentou = false
+        if (!reabrindo) { retentou = false; retentouHlsFallback = false }
         try {
             ParaleloDataSource.Estat.zerar()
             quadrosPerdidos = 0L; statsTiques = 0
             val titulo = tituloPedido
             tituloAberto = ""
-            val r = preparada?.recursos ?: criarPlayer(act, url, cabecalhos, bufferPreset, cacheMbPedido, false, geracao, titulo = titulo)
+            val r = preparada?.recursos ?: criarPlayer(act, urlLimpa, cabLimpos, bufferPreset, cacheMbPedido, false, geracao, titulo = titulo)
             if (preparada != null) {
                 medidorToken = medidor.sessao(geracao)
                 r.promover(medidorToken)
@@ -1467,9 +1546,20 @@ object NvPlayer {
             aplicarEncaixe()
 
             if (preparada == null) {
-                val mediaItem = itemMidia(url)
+                val mediaItem = itemMidia(urlLimpa, cabLimpos)
                 var inicioAceito = false
-                if (inicioMs > 0) {
+                val ehHls = ehHlsUrl(urlLimpa, cabLimpos)
+                if (ehHls && r.hlsFactory != null) {
+                    val hlsFonte = r.hlsFactory!!.createMediaSource(mediaItem)
+                    if (inicioMs > 0) {
+                        try {
+                            p.setMediaSource(hlsFonte, inicioMs.toLong())
+                            inicioAceito = true
+                        } catch (e: Exception) {
+                            p.setMediaSource(hlsFonte)
+                        }
+                    } else p.setMediaSource(hlsFonte)
+                } else if (inicioMs > 0) {
                     try {
                         // Set position before prepare; no redundant initial Range.
                         p.setMediaItem(mediaItem, inicioMs.toLong())
@@ -2169,6 +2259,27 @@ object NvPlayer {
                 val fracao = if (inicio > 0) 0 else fracaoAtual
                 principal.postDelayed({ if (atual(minha)) abrirMain(u, c, true, inicio, geracao, pedido, fracao) }, 400)
                 return
+            }
+            val parsingError = error.errorCode == PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED ||
+                generateSequence(error.cause) { it.cause }.any {
+                    it.javaClass.name.contains("UnrecognizedInputFormatException") ||
+                    it.message?.contains("None of the available extractors") == true
+                }
+            if (parsingError && !retentouHlsFallback && p != null) {
+                retentouHlsFallback = true
+                Log.i(TAG, "[live] formato desconhecido na tentativa progressiva; tentando reproducao como HLS")
+                val itemHls = MediaItem.Builder().setUri(urlAtual)
+                    .setMimeType(MimeTypes.APPLICATION_M3U8).build()
+                val hlsSource = recursosAtuais?.hlsFactory?.createMediaSource(itemHls)
+                if (hlsSource != null) {
+                    principal.post {
+                        if (!atual(minha) || player !== p) return@post
+                        p.setMediaSource(hlsSource)
+                        p.prepare()
+                        p.playWhenReady = !pausaPedida
+                    }
+                    return
+                }
             }
             ev(EV_ERRO, error.errorCode, tipo)
         }

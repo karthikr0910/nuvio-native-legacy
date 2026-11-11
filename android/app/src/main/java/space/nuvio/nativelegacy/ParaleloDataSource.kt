@@ -136,9 +136,13 @@ class ParaleloDataSource(
             val s = uri.scheme ?: return false
             if (!s.equals("http", true) && !s.equals("https", true)) return false
             val p = (uri.path ?: "").lowercase()
+            val q = (uri.query ?: "").lowercase()
             return !(p.endsWith(".m3u8") || p.endsWith(".mpd") || p.endsWith(".ts") ||
                 p.endsWith(".m4s") || p.endsWith(".aac") || p.endsWith(".vtt") ||
-                p.endsWith(".srt") || p.contains("/manifest"))
+                p.endsWith(".srt") || p.contains("/manifest") || p.contains("/hls") ||
+                p.contains("/live/") || p.endsWith(".m3u") || p.endsWith(".mp2t") ||
+                q.contains("m3u8") || q.contains("hls") || q.contains("output=ts") ||
+                q.contains("format=ts") || q.contains("format=m3u") || q.contains("output=m3u"))
         }
     }
 

@@ -143,7 +143,10 @@ internal class LivePlaylistDataSource private constructor(
         // the server advertises Content-Length. Keep the extractor loading.
         if (liveTsSpec != null) return C.LENGTH_UNSET.toLong()
         val http = dataSpec.uri.scheme.equals("http", true) || dataSpec.uri.scheme.equals("https", true)
-        val manifest = dataSpec.uri.path?.endsWith(".m3u8", true) == true || headers.any { (key, values) ->
+        val p = (dataSpec.uri.path ?: "").lowercase()
+        val q = (dataSpec.uri.query ?: "").lowercase()
+        val manifest = p.endsWith(".m3u8") || p.endsWith(".m3u") || p.contains(".m3u8") ||
+            q.contains("m3u8") || q.contains("hls") || headers.any { (key, values) ->
             key.equals("Content-Type", true) && values.any {
                 it.substringBefore(';').trim().lowercase() in setOf("application/vnd.apple.mpegurl", "application/x-mpegurl", "audio/mpegurl", "audio/x-mpegurl")
             }
@@ -224,7 +227,10 @@ internal class LivePlaylistDataSource private constructor(
     // Keep PCR, PTS and DTS on the same clock across independent HTTP sessions.
     // Hold packets until each PES timestamp is complete, including interleaved PIDs.
     private fun rebaseTimestamps(b: ByteArray) {
-        if (b[0] != 0x47.toByte()) throw IOException("Invalid live TS sync byte")
+        if (b[0] != 0x47.toByte()) {
+            val sync = b.indexOf(0x47.toByte())
+            if (sync < 0) return
+        }
         val mask = 0x1ffffffffL
         fun adjusted(raw: Long): Long {
             var value = raw + timestampOffset
@@ -308,10 +314,16 @@ internal class LivePlaylistDataSource private constructor(
     }
 
     companion object {
-        // Only the Xtream continuous live endpoint; never VOD or HLS segments.
-        internal fun isLiveTs(uri: Uri): Boolean =
-            (uri.scheme.equals("http", true) || uri.scheme.equals("https", true)) &&
-                uri.path?.matches(Regex("/live/[^/]+/[^/]+/[^/]+\\.ts", RegexOption.IGNORE_CASE)) == true
+        // Continuous live TS streams (Xtream, custom live TV feeds); never VOD or HLS playlists.
+        internal fun isLiveTs(uri: Uri): Boolean {
+            val scheme = uri.scheme ?: return false
+            if (!scheme.equals("http", true) && !scheme.equals("https", true)) return false
+            val path = (uri.path ?: "").lowercase()
+            val query = (uri.query ?: "").lowercase()
+            if (path.endsWith(".m3u8") || path.endsWith(".m3u") || query.contains("m3u8") || query.contains("hls")) return false
+            return path.endsWith(".ts") || path.contains("/live/") ||
+                query.contains("format=ts") || query.contains("output=ts")
+        }
 
         private const val MAX_MANIFEST_BYTES = 256 * 1024
         private fun readBounded(source: DataSource, check: () -> Unit = {}): ByteArray {
