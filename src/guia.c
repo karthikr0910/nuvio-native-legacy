@@ -266,7 +266,7 @@ static void gTopoDistribuir(const float *larguras) {
 //     fonte fica marcada `cortada` para a tela dizer (nunca mais em silencio).
 #define G_MAX_FAV    400
 // Cada addon pode declarar VARIOS catalogos de canal no manifesto.
-#define G_MAX_FONTE   24
+#define G_MAX_FONTE   128
 #define G_MAX_LTV     (IPTV_MAX_CONTAS + G_MAX_FONTE + LTV_URLS_MAX)     // fontes da barra (addons + Stalker + Xtream + M3U)
 #define G_PAGINA     100
 
@@ -339,9 +339,9 @@ static int sTeto;            // visible channel limit
 static size_t sCacheBytes;
 #define G_PF_CANAIS_MAX 4000
 // Global and per-category limits; category metadata and disk lookup stay available.
-#define G_INVENTARIO_POR_CAT 64
-#define G_INVENTARIO_MAX 4000
-#define G_INVENTARIO_BYTES_MAX (4 * 1024 * 1024)
+#define G_INVENTARIO_POR_CAT 256
+#define G_INVENTARIO_MAX 10000
+#define G_INVENTARIO_BYTES_MAX (8 * 1024 * 1024)
 typedef struct { char id[GF_ID], nome[GF_NOME], cat[GF_NOME], fonte[LTV_CHAVE]; } GInventario;
 static GInventario *inventario, *sInventario;
 static int nInventario, sNInventario;
@@ -615,12 +615,13 @@ static int sCanalAdd(int f, const GCru *c) {
     if (velho >= 0) sAltAdd(sCanais[velho].id, c->id, c->nome);
     return 0;
   }
-  if (quem != GF_TROCA &&
+  int fonteSemCanal = (sLtvF[f].nCanais < 50);
+  if (quem != GF_TROCA && !fonteSemCanal &&
       (sCotaCompleta() || sNCanais >= G_CANDIDATOS_MAX || (pendente && sPendentes >= G_MAX_PENDENTES))) {
     sLtvF[f].cortada = 1; return 0;
   }
   // Stable rows cannot free slots later. Keep scanning for inventory and filters.
-  if (quem != GF_TROCA && sFltLive.modo != GF_PREFERIR_4K && !ajustes_livetv_sugerir()) {
+  if (quem != GF_TROCA && !fonteSemCanal && sFltLive.modo != GF_PREFERIR_4K && !ajustes_livetv_sugerir()) {
     int nc = 0, found = 0;
     for (int i = 0; i < sNCats; i++) {
       nc++;
@@ -1118,7 +1119,10 @@ static void filtroDefinir(int f) {
 // declare um catalogo desses cai direto no guia — e a resposta ao "se outro
 // addon de canais entrar, ele ja vai parar aqui".
 static int ehCanal(const char *t) {
-  static const char *tipos[] = { "channel", "tv", "channels", "live", "iptv" };
+  static const char *tipos[] = {
+    "channel", "tv", "channels", "live", "iptv",
+    "sports", "sport", "livetv", "stream", "streams", "events", "radio", "other"
+  };
   int i;
   if (!t || !t[0]) return 0;
   for (i = 0; i < (int)(sizeof tipos / sizeof tipos[0]); i++)
@@ -1167,25 +1171,30 @@ static int contemSemCaixa(const char *texto, const char *chave) {
   return 0;
 }
 static const char *categoriaPorNome(const char *nome) {
-  static const struct { const char *cat; const char *chaves[40]; } tab[] = {
+  static const struct { const char *cat; const char *chaves[48]; } tab[] = {
     { "Esportes", { "espn", "sportv", "sport", "premiere", "combate", "dazn", "ufc",
                     "nba", "nfl", "nhl", "mlb", "tyc", "futebol", "golf", "tennis",
                     "motor", "caz", "ge tv", "bein", "fight", "wwe",
-                    "racing", "olymp", "paramount+ esport", "goat", "poker", NULL } },
+                    "racing", "olymp", "paramount+ esport", "goat", "poker",
+                    "sky sp", "bt sport", "tnt sport", "eurosport", "willow",
+                    "tsn", "sportsnet", "supersport", "star sport", "ten sport",
+                    "sony ten", "sony six", "astro", "cricket", NULL } },
     { "Notícias", { "news", "cnn", "jovem pan", "bloomberg", "msnbc", "cnbc",
                     "euronews", "newsmax", "noticia", "al jazeera",
-                    "weather", "tempo", NULL } },
+                    "weather", "tempo", "bbc", "sky news", "fox news",
+                    "reuters", "dw", "france 24", NULL } },
     { "Infantil", { "cartoon", "nick", "disney", "gloob", "boomerang", "kids",
                     "baby", "junior", "tooncast", "cartoonito", "zoomoo",
-                    "discovery kids", "pbs kids", NULL } },
+                    "discovery kids", "pbs kids", "cbbc", "cbeebies", "treehouse", NULL } },
     { "Documentários", { "discovery", "history", "nat geo", "national geo",
                     "animal planet", "curta", "investiga", "science", "smithsonian",
                     "docu", "h2", "planet", "nature", "crime", NULL } },
     { "Filmes", { "hbo", "telecine", "cine", "megapix", "tcm", "paramount", "amc",
                   "space", "star channel", "movie", "film", "cinemax", "studio universal",
-                  "sony movies", "canal brasil", "syfy", "arte 1", "arte1", NULL } },
+                  "sony movies", "canal brasil", "syfy", "arte 1", "arte1",
+                  "showtime", "starz", "cinema", "box office", "sky cinema", NULL } },
     { "Séries", { "warner", "sony", "universal", "fx", "axn", "a&e", "ae ", "series",
-                  "tnt", "comedy", "fox", "cw", NULL } },
+                  "tnt", "comedy", "fox", "cw", "sky atlantic", "itv", "comedy central", NULL } },
     { "Música", { "mtv", "music", "vh1", "bis", "radio", "hits", "trace",
                   "sertanejo", "pagode", "rock", "jazz", "classic", NULL } },
     { "Variedades", { "gnt", "multishow", "viva", "off", "tlc", "lifetime", "food",
@@ -1349,6 +1358,38 @@ static void sondaManifestos(void) {
 }
 
 
+static void limparEspacos(char *s) {
+  if (!s || !*s) return;
+  char *p = s;
+  while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') p++;
+  if (p != s) memmove(s, p, strlen(p) + 1);
+  size_t len = strlen(s);
+  while (len > 0 && (s[len - 1] == ' ' || s[len - 1] == '\t' || s[len - 1] == '\r' || s[len - 1] == '\n')) {
+    s[--len] = '\0';
+  }
+}
+
+static void extrairCategoriaJson(const char *p, const char *fim, char *gen, size_t tam) {
+  if (tam > 0) gen[0] = 0;
+  const char *g = js_array(p, fim, "genre");
+  if (!g) g = js_array(p, fim, "genres");
+  if (!g) g = js_array(p, fim, "category");
+  if (!g) g = js_array(p, fim, "categories");
+  if (!g) g = js_array(p, fim, "group");
+  if (!g) g = js_array(p, fim, "groups");
+  if (g) {
+    lerStrEl(g, gen, (int)tam);
+    if (gen[0]) return;
+  }
+  if (js_texto(p, fim, "genre", gen, tam) && gen[0]) return;
+  if (js_texto(p, fim, "genres", gen, tam) && gen[0]) return;
+  if (js_texto(p, fim, "category", gen, tam) && gen[0]) return;
+  if (js_texto(p, fim, "categories", gen, tam) && gen[0]) return;
+  if (js_texto(p, fim, "group", gen, tam) && gen[0]) return;
+  if (js_texto(p, fim, "group-title", gen, tam) && gen[0]) return;
+  if (js_texto(p, fim, "group_title", gen, tam) && gen[0]) return;
+}
+
 // Uma pagina de catalogo de addon para a fonte `fl`. Devolve quantos METAS a
 // pagina trouxe — nao quantos entraram: uma fonte pode repetir canais de outra,
 // e contar so os novos encerraria a pagina uma rodada cedo.
@@ -1392,9 +1433,8 @@ static int lerPagina(const GFonte *f, int fl, int skip, int *novos) {
       if (!js_texto(p, fim, "poster", logo, sizeof logo))
         js_texto(p, fim, "logo", logo, sizeof logo);
       js_texto(p, fim, "description", desc, sizeof desc);
-      { const char *g = js_array(p, fim, "genre");
-        if (!g) g = js_array(p, fim, "genres");
-        lerStrEl(g, gen, sizeof gen); }
+      extrairCategoriaJson(p, fim, gen, sizeof gen);
+      limparEspacos(gen);
       // SEM GENERO: primeiro o nome do canal (categoriaPorNome), depois o
       // nome do catalogo de onde ele veio ("Meu Futebol"). "Outros" fica so
       // para catalogo sem nome.
@@ -1448,7 +1488,7 @@ static int sCotaCompleta(void) {
 }
 static int carregarCatalogo(const GFonte *f, int fl) {
   int ok = 0;
-  for (int skip = 0; cargaAtual() && !sCotaCompleta(); skip += G_PAGINA) {
+  for (int skip = 0; cargaAtual() && (skip == 0 || (sLtvF[fl].nCanais < 100 ? sNCanais < G_CANDIDATOS_MAX : !sCotaCompleta())); skip += G_PAGINA) {
     int novos = 0, n = lerPagina(f, fl, skip, &novos);
     if (n <= 0) break;
     ok = 1;
@@ -2283,13 +2323,16 @@ static void selecionarSecoes(void) {
   guiafiltro_dup_zerar(&sDup);
   sNCanais = w; w = 0;
   // One admission pass over final winners: category cap, then channel cap.
+  int porFonte[G_MAX_LTV] = {0};
   for (int i = 0, j; i < sNCanais; i++) {
     GCanal *g = &sCanais[i];
     for (j = 0; j < nc && visiveis[j] != g->cat; j++) {}
-    if ((j == nc && nc >= GUIACORTE_MAX_CAT) || w >= sTeto) {
+    int fonteGarantida = (g->fonte >= 0 && g->fonte < sNLtvF && porFonte[g->fonte] < 50);
+    if ((j == nc && nc >= GUIACORTE_MAX_CAT) || (w >= sTeto && !fonteGarantida)) {
       sLtvF[g->fonte].cortada = 1; continue;
     }
     if (j == nc) visiveis[nc++] = g->cat;
+    if (g->fonte >= 0 && g->fonte < sNLtvF) porFonte[g->fonte]++;
     sCanais[w++] = *g;
   }
   sNCanais = w;

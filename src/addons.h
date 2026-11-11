@@ -367,7 +367,7 @@ void addons_manifesto_lido_base(int i, const char *base, const char *destino,
 // `saida`; -1 quando o manifesto deste addon ainda nao foi lido (ai o guia
 // baixa ele mesmo, como antes).
 typedef struct { char tipo[16], id[96], nome[96]; } AddCatCanal;
-#define ADD_CANAL_MAX 4
+#define ADD_CANAL_MAX 64
 int addons_catalogos_canal(int i, AddCatCanal *saida, int max);
 
 // POR QUE A ULTIMA BUSCA NAO TROUXE FONTE, em frase curta ja traduzida

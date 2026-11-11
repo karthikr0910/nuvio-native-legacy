@@ -2072,6 +2072,34 @@ static int manifestoSoVivo(const char *corpo, const AddCatCanal *canal, int nCan
   return 0;
 }
 
+static int ehTipoCanal(const char *t) {
+  if (!t || !t[0]) return 0;
+  return !strcasecmp(t, "channel") || !strcasecmp(t, "tv") ||
+         !strcasecmp(t, "channels") || !strcasecmp(t, "live") ||
+         !strcasecmp(t, "iptv") || !strcasecmp(t, "sports") ||
+         !strcasecmp(t, "sport") || !strcasecmp(t, "livetv") ||
+         !strcasecmp(t, "stream") || !strcasecmp(t, "streams") ||
+         !strcasecmp(t, "events") || !strcasecmp(t, "radio") ||
+         !strcasecmp(t, "other");
+}
+
+static int streamTemTipoCanal(const char *streamTipos) {
+  if (!streamTipos || !streamTipos[0]) return 0;
+  return strstr(streamTipos, "|tv|") != NULL ||
+         strstr(streamTipos, "|channel|") != NULL ||
+         strstr(streamTipos, "|channels|") != NULL ||
+         strstr(streamTipos, "|live|") != NULL ||
+         strstr(streamTipos, "|iptv|") != NULL ||
+         strstr(streamTipos, "|sports|") != NULL ||
+         strstr(streamTipos, "|sport|") != NULL ||
+         strstr(streamTipos, "|livetv|") != NULL ||
+         strstr(streamTipos, "|stream|") != NULL ||
+         strstr(streamTipos, "|streams|") != NULL ||
+         strstr(streamTipos, "|events|") != NULL ||
+         strstr(streamTipos, "|radio|") != NULL ||
+         strstr(streamTipos, "|other|") != NULL;
+}
+
 static void capacidadesDoManifesto(int i, const char *corpo) {
   // chaveNaRaiz, nao strstr: o primeiro "resources" do documento pode estar
   // dentro de uma STRING (description: "resources required..."), dentro de
@@ -2129,9 +2157,7 @@ static void capacidadesDoManifesto(int i, const char *corpo) {
       if (!addon[i].tipoCatalogo[0] && c.tipo[0] &&
           strcasecmp(c.tipo, "movie") && strcasecmp(c.tipo, "series"))
         snprintf(addon[i].tipoCatalogo, sizeof addon[i].tipoCatalogo, "%s", c.tipo);
-      if (c.id[0] && (!strcasecmp(c.tipo, "channel") || !strcasecmp(c.tipo, "tv") ||
-                      !strcasecmp(c.tipo, "channels") || !strcasecmp(c.tipo, "live") ||
-                      !strcasecmp(c.tipo, "iptv")))
+      if (c.id[0] && ehTipoCanal(c.tipo))
         addon[i].canal[addon[i].nCanal++] = c;
       p = js_prox(f);
     }
@@ -2622,7 +2648,10 @@ static int aceitaStream(const AddonPedido *p, const char *tipo, const char *id) 
   if (p->streamTipos[0]) {
     char marca[40];
     snprintf(marca, sizeof marca, "|%s|", tipo);
-    if (!strstr(p->streamTipos, marca)) return 0;
+    int tipoCasou = (strstr(p->streamTipos, marca) != NULL);
+    if (!tipoCasou && ehTipoCanal(tipo) && streamTemTipoCanal(p->streamTipos))
+      tipoCasou = 1;
+    if (!tipoCasou) return 0;
   }
   if (!id || !p->nStreamPref) return 1;
   char longo[IDCANAL_LONGO_MAX + 1];
@@ -2802,7 +2831,7 @@ static void *fioFontes(void *u) {
     const AddonPedido *origem;
     char url[NV_ADDON_PEDIDO_MAX], idUrl[3 * IDCANAL_LONGO_MAX + 1], *corpo;
     const char *t1;
-    const char *tipos[7];
+    const char *tipos[16];
     int nTipos;
     Stream *achados;
     pthread_mutex_lock(&c->trava);
@@ -2843,8 +2872,11 @@ static void *fioFontes(void *u) {
     t1 = c->tipo;
     tipos[0] = t1; tipos[1] = origem->tipoCanal;
     tipos[2] = "channel"; tipos[3] = "tv"; tipos[4] = "channels";
-    tipos[5] = "live"; tipos[6] = "iptv";
-    nTipos = !strcmp(t1, "movie") || !strcmp(t1, "series") ? 1 : 7;
+    tipos[5] = "live"; tipos[6] = "iptv"; tipos[7] = "sports";
+    tipos[8] = "sport"; tipos[9] = "livetv"; tipos[10] = "stream";
+    tipos[11] = "streams"; tipos[12] = "events"; tipos[13] = "radio";
+    tipos[14] = "other";
+    nTipos = !strcmp(t1, "movie") || !strcmp(t1, "series") ? 1 : 15;
     // Prazo da consulta (c->timeout): 30 s para filme/serie, 12 s para canal e
     // prefetch. Ver ADD_PRAZO_VOD_S em consultar().
     prazoS = prazoDoAddon(c, i);
@@ -3266,9 +3298,11 @@ static int consultar(const char *id, const char *tipo, const char *base, int fio
       char alvo[NV_ADDON_URL_MAX], mine[NV_ADDON_URL_MAX];
       baseNormalizada(base, alvo, sizeof alvo);
       for (i = 0; i < c.nOrigens; i++) {
-        if (!candidatoStream(&c.origens[i], tipo, id)) continue;
         baseNormalizada(c.origens[i].base, mine, sizeof mine);
-        if (!strcmp(mine, alvo)) c.baldes[c.nBaldes++].idx = i;
+        if (!strcmp(mine, alvo)) {
+          if (candidatoStream(&c.origens[i], tipo, id) || (ehTipoCanal(tipo) && c.origens[i].ativo && c.origens[i].fonte))
+            c.baldes[c.nBaldes++].idx = i;
+        }
       }
     }
     // Sem origem conhecida, ou origem que nao esta (mais) na lista: todos,
