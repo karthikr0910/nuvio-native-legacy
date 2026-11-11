@@ -44,10 +44,10 @@ jobs:
           distribution: "temurin"
           java-version: "17"
 
-      - name: Install Android NDK, CMake 3.22.1 & Build Tools
+      - name: Install Android NDK, CMake 3.22.1 & System Tools
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y ninja-build
+          sudo apt-get install -y ninja-build ffmpeg build-essential
           sudo chown -R runner:docker "$ANDROID_HOME"
           SDK_MGR="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
           echo "y" | "$SDK_MGR" --licenses || true
