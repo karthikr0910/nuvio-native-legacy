@@ -814,6 +814,12 @@ void sessao_iniciar(void) {
   // pedir o codigo, e tratar isso como "logado" faria o app pular a tela de
   // login e depois falhar em todo sync com 401 sem explicar nada.
   if (acesso[0] && !anonima) {
+    if (sessao_eh_convidado() && nuvem_pronta()) {
+      printf("[sessao] servidor de conta disponivel: limpando sessao convidado para exibir login\n");
+      limpar();
+      dados_apagar(ARQ_SESSAO);
+      return;
+    }
     estado = SES_LOGADO;
     printf("[sessao] sessao restaurada (%s)\n", sub[0] ? sub : "sem sub");
   } else if (!nuvem_pronta()) {
